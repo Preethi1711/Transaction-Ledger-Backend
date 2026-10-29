@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: transaction-ledger-db
+    # Listen on the host port directly. A published port goes through the Docker
+    # bridge, which this machine's network routes away from the container.
+    network_mode: host
+    environment:
+      POSTGRES_DB: ledger
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ledger -d ledger"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
