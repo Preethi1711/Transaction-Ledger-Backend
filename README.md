@@ -15,9 +15,16 @@ Tests run against an in-memory H2 database and do not need PostgreSQL.
 
 ## Run locally
 
-Requirements: Java 17, Maven, and Docker (for PostgreSQL).
+Requirements: Java 17 and Maven. Use either Docker or Supabase for PostgreSQL. Do not set both at once. If `DB_URL` is set in the shell, the API uses that database instead of the Docker one.
 
-From the project root:
+The API listens on `http://localhost:8080`.
+
+Swagger UI: `http://localhost:8080/swagger-ui.html`  
+OpenAPI JSON: `http://localhost:8080/v3/api-docs`
+
+### Docker Compose
+
+From the project root. This starts PostgreSQL from `docker-compose.yml` (database `ledger`, user `ledger`, password `ledger`).
 
 ```bash
 docker compose down
@@ -25,27 +32,24 @@ docker compose up -d
 mvn spring-boot:run
 ```
 
-The API listens on `http://localhost:8080`. Hibernate creates `accounts` and `transactions` on startup (`JPA_DDL_AUTO` defaults to `update`), including:
+### Supabase
 
-- `balance >= 0` on accounts
-- `amount > 0` and type `CREDIT` or `DEBIT` on transactions
-- a unique `(account_id, reference_id)` constraint
-- a foreign key from each transaction to its account
-
-Swagger UI: `http://localhost:8080/swagger-ui.html`  
-OpenAPI JSON: `http://localhost:8080/v3/api-docs`
-
-To use an existing PostgreSQL database instead of Docker:
+Create a `.env` file in the project root. Do not commit it. Use the connection values from the Supabase project settings.
 
 ```bash
-export DB_URL='jdbc:postgresql://127.0.0.1:5432/ledger?sslmode=disable'
-export DB_USERNAME='ledger'
-export DB_PASSWORD='ledger'
-export SERVER_PORT=8080
-mvn spring-boot:run
+DB_URL=jdbc:postgresql://<host>:5432/postgres?sslmode=require
+DB_USERNAME=<supabase-user>
+DB_PASSWORD=<supabase-password>
 ```
 
-`src/main/resources/db/schema.sql` is the same schema if you prefer to create the tables yourself. After running that script, start the API with `JPA_DDL_AUTO=validate`.
+Load that file, then start the API. Docker is not required for this option.
+
+```bash
+set -a
+source .env
+set +a
+mvn spring-boot:run
+```
 
 ## Tests
 
@@ -64,81 +68,6 @@ There is no update or delete endpoint. A transaction's type, amount, description
 | `POST` | `/api/accounts/{accountId}/transactions` | `201` credit or debit |
 | `GET` | `/api/accounts/{accountId}/transactions` | `200` history, newest first |
 | `POST` | `/api/transfers` | `201` debit one account and credit another |
-
-Transaction body:
-
-```json
-{
-  "type": "CREDIT",
-  "amount": 100.00,
-  "description": "Opening deposit",
-  "referenceId": "REF-1"
-}
-```
-
-`type` is `CREDIT` or `DEBIT`. `amount` must be greater than 0 and have at most 2 decimal places. `referenceId` is required and unique per account. The same `referenceId` may be used on a different account. `description` is optional.
-
-History query parameters:
-
-| Parameter | Meaning |
-| --- | --- |
-| `type` | Optional. `CREDIT` or `DEBIT`. Omit it to return both. |
-| `page` | Current page. Starts at `1`. Default `1`. |
-| `limit` | Page size, from `1` to `100`. Default `10`. |
-
-History response:
-
-```json
-{
-  "transactions": [],
-  "page": 1,
-  "pageSize": 10,
-  "totalRecords": 0,
-  "totalPages": 0
-}
-```
-
-Transactions are sorted by `createdAt` descending, then by `id` descending.
-
-Transfer body:
-
-```json
-{
-  "fromAccountId": 1,
-  "toAccountId": 2,
-  "amount": 30.00,
-  "description": "Payment",
-  "referenceId": "TRF-1"
-}
-```
-
-The source account is debited and the destination account is credited with the same amount and the same `referenceId`. Both ledger rows and both balance updates commit together. If either account is missing, the reference is already used on either account, or the source balance is too low, neither balance changes.
-
-| Status | When |
-| --- | --- |
-| `201` | Account, transaction, or transfer created |
-| `200` | Balance or history |
-| `400` | Invalid body, type, amount, pagination, or a transfer to the same account |
-| `404` | Unknown account |
-| `409` | `referenceId` already used on that account |
-| `422` | Debit or transfer larger than the source balance |
-
-Error body:
-
-```json
-{
-  "timestamp": "2026-10-29T08:00:00Z",
-  "status": 400,
-  "error": "Bad Request",
-  "message": "Validation failed",
-  "path": "/api/accounts",
-  "fieldErrors": [
-    { "field": "name", "message": "Account name is required" }
-  ]
-}
-```
-
-`fieldErrors` is omitted when the error is not a field validation error.
 
 ## Curl checks
 
@@ -228,18 +157,6 @@ curl -sS -w '\nHTTP %{http_code}\n' "$BASE/api/accounts/2/balance"
 ```
 
 If the database already has accounts, replace `1` and `2` with the `id` values returned by the create calls.
-
-Worked example from an empty database:
-
-| Step | Account A | Account B |
-| --- | ---: | ---: |
-| Create | 0 | 0 |
-| Credits | 100 | 50 |
-| Debit 30 from A | 70 | 50 |
-| Credit 10 to B with reference `REF-A2` | 70 | 60 |
-| Transfer 30 from A to B | 40 | 90 |
-
-The rejected debit of 150 and the rejected transfer of 1000 do not change these balances.
 
 ## Assumptions
 
